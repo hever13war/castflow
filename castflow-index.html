@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CastFlow — Screen Mirror</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080c10;
+    --surface: #0e1420;
+    --border: #1a2235;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --text: #e2e8f0;
+    --muted: #4a5568;
+    --danger: #ef4444;
+    --success: #10b981;
+    --warn: #f59e0b;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body::before {
+    content:'';
+    position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size:40px 40px;
+    pointer-events:none; z-index:0;
+  }
+  .orb { position:fixed; border-radius:50%; filter:blur(80px); pointer-events:none; z-index:0; }
+  .orb-1 { width:400px; height:400px; background:rgba(0,229,255,0.07); top:-100px; right:-100px; }
+  .orb-2 { width:300px; height:300px; background:rgba(124,58,237,0.07); bottom:50px; left:-80px; }
+
+  .container { position:relative; z-index:1; max-width:860px; margin:0 auto; padding:36px 20px 80px; }
+
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:48px; }
+  .logo { display:flex; align-items:center; gap:12px; }
+  .logo-icon {
+    width:40px; height:40px;
+    background:linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:20px;
+  }
+  .logo-text { font-size:21px; font-weight:800; letter-spacing:-0.5px; }
+  .logo-text span { color:var(--accent); }
+  .badge {
+    font-family:'IBM Plex Mono',monospace; font-size:10px;
+    padding:4px 10px; border:1px solid var(--border); border-radius:20px;
+    color:var(--muted); letter-spacing:1px;
+  }
+
+  .hero { text-align:center; margin-bottom:44px; }
+  .hero h1 {
+    font-size:clamp(28px,5.5vw,50px); font-weight:800;
+    line-height:1.05; letter-spacing:-1.5px; margin-bottom:14px;
+  }
+  .hero h1 .hl {
+    background:linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+  }
+  .hero p {
+    font-family:'IBM Plex Mono',monospace; font-size:12px;
+    color:var(--muted); line-height:1.8; max-width:440px; margin:0 auto;
+  }
+
+  /* MODE CARDS */
+  .mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:28px; }
+  .mode-card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:22px; cursor:pointer;
+    transition:all 0.2s; text-align:left; position:relative; overflow:hidden;
+  }
+  .mode-card::after {
+    content:''; position:absolute; inset:0; opacity:0; transition:opacity 0.2s;
+  }
+  .mode-card.sender::after { background:linear-gradient(135deg,rgba(0,229,255,0.06),transparent); }
+  .mode-card.receiver::after { background:linear-gradient(135deg,rgba(124,58,237,0.06),transparent); }
+  .mode-card:hover { transform:translateY(-2px); border-color:var(--muted); }
+  .mode-card:hover::after { opacity:1; }
+  .mode-card.active.sender { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent),0 0 28px rgba(0,229,255,0.1); }
+  .mode-card.active.receiver { border-color:var(--accent2); box-shadow:0 0 0 1px var(--accent2),0 0 28px rgba(124,58,237,0.12); }
+  .mode-card.active::after { opacity:1; }
+  .mode-tag {
+    position:absolute; top:14px; right:14px;
+    font-size:9px; font-family:'IBM Plex Mono',monospace;
+    padding:3px 7px; border-radius:4px; letter-spacing:1px;
+  }
+  .sender .mode-tag { background:rgba(0,229,255,0.1); color:var(--accent); }
+  .receiver .mode-tag { background:rgba(124,58,237,0.1); color:#a78bfa; }
+  .mode-icon { font-size:26px; margin-bottom:10px; display:block; }
+  .mode-title { font-size:16px; font-weight:700; margin-bottom:5px; }
+  .mode-desc { font-size:11px; color:var(--muted); font-family:'IBM Plex Mono',monospace; line-height:1.6; }
+
+  /* PANEL */
+  .panel {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:18px; padding:28px; margin-bottom:20px;
+    display:none; animation:fadeIn 0.3s ease;
+  }
+  .panel.visible { display:block; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+
+  .section-label {
+    font-family:'IBM Plex Mono',monospace; font-size:11px;
+    color:var(--muted); letter-spacing:2px; text-transform:uppercase;
+    margin-bottom:18px; display:flex; align-items:center; gap:10px;
+  }
+  .section-label::after { content:''; flex:1; height:1px; background:var(--border); }
+
+  /* CODE DISPLAY */
+  .code-box {
+    background:var(--bg); border:1px solid var(--border);
+    border-radius:12px; padding:18px 24px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:clamp(24px,6vw,36px); font-weight:500;
+    letter-spacing:10px; text-align:center; color:var(--accent);
+    position:relative; margin-bottom:14px; user-select:all;
+  }
+  .code-box .lbl {
+    position:absolute; top:-10px; left:18px;
+    background:var(--surface); padding:0 8px;
+    font-size:10px; color:var(--muted); letter-spacing:1px;
+  }
+
+  /* INPUT */
+  .code-input {
+    width:100%; background:var(--bg); border:1px solid var(--border);
+    border-radius:10px; padding:16px 20px;
+    font-family:'IBM Plex Mono',monospace; font-size:clamp(20px,5vw,30px);
+    letter-spacing:8px; color:var(--text); outline:none;
+    transition:border-color 0.2s; text-align:center; margin-bottom:14px;
+  }
+  .code-input:focus { border-color:var(--accent2); }
+  .code-input::placeholder { color:var(--muted); letter-spacing:4px; font-size:14px; }
+
+  /* STATUS */
+  .status-bar {
+    display:flex; align-items:center; gap:10px;
+    padding:11px 16px; background:var(--bg);
+    border:1px solid var(--border); border-radius:10px;
+    margin-bottom:14px; font-family:'IBM Plex Mono',monospace; font-size:11px;
+  }
+  .dot {
+    width:8px; height:8px; border-radius:50%;
+    background:var(--muted); flex-shrink:0; transition:all 0.3s;
+  }
+  .dot.on { background:var(--success); box-shadow:0 0 8px var(--success); animation:blink 2s infinite; }
+  .dot.warn { background:var(--warn); box-shadow:0 0 8px var(--warn); }
+  .dot.err { background:var(--danger); box-shadow:0 0 8px var(--danger); }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* PREVIEW */
+  .preview {
+    background:#000; border:1px solid var(--border);
+    border-radius:12px; overflow:hidden; margin-bottom:14px;
+    aspect-ratio:16/9; display:flex; align-items:center; justify-content:center;
+    position:relative;
+  }
+  .preview-ph { text-align:center; color:var(--muted); font-family:'IBM Plex Mono',monospace; font-size:11px; }
+  .preview-ph .ic { font-size:32px; margin-bottom:10px; }
+  video { width:100%; height:100%; object-fit:contain; display:none; }
+
+  /* QUALITY */
+  .q-row { display:flex; gap:8px; margin-bottom:18px; }
+  .q-btn {
+    flex:1; padding:10px 6px;
+    background:var(--bg); border:1px solid var(--border);
+    border-radius:8px; color:var(--muted);
+    font-family:'IBM Plex Mono',monospace; font-size:10px;
+    cursor:pointer; text-align:center; transition:all 0.15s; letter-spacing:1px;
+  }
+  .q-btn.on { background:rgba(0,229,255,0.08); border-color:var(--accent); color:var(--accent); }
+  .q-btn:hover:not(.on) { border-color:var(--muted); color:var(--text); }
+
+  /* STATS */
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
+  .stat { background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:12px; text-align:center; }
+  .stat-v { font-family:'IBM Plex Mono',monospace; font-size:16px; color:var(--accent); margin-bottom:3px; }
+  .stat-l { font-size:9px; color:var(--muted); font-family:'IBM Plex Mono',monospace; letter-spacing:1px; text-transform:uppercase; }
+
+  /* BUTTONS */
+  .btn {
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    width:100%; padding:14px 24px; border-radius:10px;
+    font-family:'Syne',sans-serif; font-weight:700; font-size:14px;
+    cursor:pointer; border:none; transition:all 0.2s; letter-spacing:0.2px;
+  }
+  .btn-cyan { background:linear-gradient(135deg,var(--accent),#0090a8); color:#000; }
+  .btn-cyan:hover { transform:translateY(-1px); box-shadow:0 8px 24px rgba(0,229,255,0.25); }
+  .btn-purple { background:linear-gradient(135deg,var(--accent2),#5b21b6); color:#fff; }
+  .btn-purple:hover { transform:translateY(-1px); box-shadow:0 8px 24px rgba(124,58,237,0.35); }
+  .btn-red { background:rgba(239,68,68,0.1); color:var(--danger); border:1px solid rgba(239,68,68,0.25); margin-top:10px; }
+  .btn-red:hover { background:rgba(239,68,68,0.18); }
+  .btn:disabled { opacity:0.4; cursor:not-allowed; transform:none !important; box-shadow:none !important; }
+
+  /* INFO */
+  .info {
+    padding:13px 16px; border-radius:10px;
+    font-size:11px; font-family:'IBM Plex Mono',monospace;
+    line-height:1.8; margin-bottom:16px;
+  }
+  .info.cyan { background:rgba(0,229,255,0.05); border:1px solid rgba(0,229,255,0.14); color:rgba(0,229,255,0.75); }
+  .info.purple { background:rgba(124,58,237,0.05); border:1px solid rgba(124,58,237,0.2); color:#a78bfa; }
+
+  /* COPY ROW */
+  .copy-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  .copy-row span { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--muted); }
+  .btn-copy {
+    padding:7px 13px; background:var(--bg); border:1px solid var(--border);
+    border-radius:7px; color:var(--muted); font-family:'IBM Plex Mono',monospace;
+    font-size:10px; cursor:pointer; transition:all 0.15s; white-space:nowrap;
+  }
+  .btn-copy:hover { border-color:var(--accent); color:var(--accent); }
+
+  /* FULLSCREEN */
+  .btn-fs {
+    position:absolute; bottom:10px; right:10px;
+    background:rgba(0,0,0,0.6); border:1px solid var(--border);
+    border-radius:7px; padding:6px 10px; color:var(--text);
+    font-family:'IBM Plex Mono',monospace; font-size:10px;
+    cursor:pointer; transition:all 0.15s; display:none;
+  }
+  .btn-fs:hover { background:rgba(0,229,255,0.1); border-color:var(--accent); }
+
+  .footer {
+    text-align:center; font-family:'IBM Plex Mono',monospace;
+    font-size:10px; color:var(--muted); margin-top:48px; line-height:2.2;
+  }
+
+  @media(max-width:580px) {
+    .mode-grid { grid-template-columns:1fr; }
+    .stats { grid-template-columns:1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">📡</div>
+      <div class="logo-text">Cast<span>Flow</span></div>
+    </div>
+    <span class="badge">WebRTC · P2P · FREE</span>
+  </header>
+
+  <div class="hero">
+    <h1>Screen Mirror<br><span class="hl">sin cables, sin costo</span></h1>
+    <p>// comparte tu pantalla a cualquier TV o PC<br>solo abre esta misma URL en ambos dispositivos</p>
+  </div>
+
+  <div class="mode-grid">
+    <div class="mode-card sender" id="card-s" onclick="selectMode('sender')">
+      <span class="mode-tag">CELULAR</span>
+      <span class="mode-icon">📱</span>
+      <div class="mode-title">Enviar pantalla</div>
+      <div class="mode-desc">Comparte tu pantalla<br>desde este dispositivo</div>
+    </div>
+    <div class="mode-card receiver" id="card-r" onclick="selectMode('receiver')">
+      <span class="mode-tag">TV / PC</span>
+      <span class="mode-icon">📺</span>
+      <div class="mode-title">Recibir pantalla</div>
+      <div class="mode-desc">Muestra la pantalla<br>en este dispositivo</div>
+    </div>
+  </div>
+
+  <!-- SENDER -->
+  <div class="panel" id="panel-s">
+    <div class="section-label">// emisor — tu celular</div>
+
+    <div class="info cyan">
+      1. Presiona <b>Iniciar transmisión</b> — el celular pedirá permiso para capturar pantalla.<br>
+      2. Aparecerá un <b>código de 6 letras</b>.<br>
+      3. En el TV abre esta misma URL, elige <b>Recibir pantalla</b> e ingresa el código.
+    </div>
+
+    <div class="section-label">Calidad</div>
+    <div class="q-row">
+      <div class="q-btn" onclick="setQ('720p',this)">720p</div>
+      <div class="q-btn on" onclick="setQ('1080p',this)">1080p</div>
+      <div class="q-btn" onclick="setQ('4k',this)">4K ✦</div>
+    </div>
+
+    <div id="code-area" style="display:none">
+      <div class="code-box">
+        <span class="lbl">CÓDIGO DE SESIÓN</span>
+        <span id="my-code">——————</span>
+      </div>
+      <div class="copy-row">
+        <span>Comparte este código con el receptor</span>
+        <button class="btn-copy" onclick="copyCode()">📋 copiar</button>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div class="dot" id="s-dot"></div>
+      <span id="s-status">Listo para iniciar</span>
+    </div>
+
+    <div class="preview">
+      <div class="preview-ph" id="s-ph"><div class="ic">🖥️</div><div>Vista previa aparecerá aquí</div></div>
+      <video id="local-vid" autoplay muted playsinline></video>
+    </div>
+
+    <div class="stats" id="s-stats" style="display:none">
+      <div class="stat"><div class="stat-v" id="st-res">—</div><div class="stat-l">Resolución</div></div>
+      <div class="stat"><div class="stat-v" id="st-fps">—</div><div class="stat-l">FPS</div></div>
+      <div class="stat"><div class="stat-v" id="st-peers">0</div><div class="stat-l">Receptores</div></div>
+    </div>
+
+    <button class="btn btn-cyan" id="btn-start" onclick="startCasting()">📡 Iniciar transmisión</button>
+    <button class="btn btn-red" id="btn-stop" onclick="stopCasting()" style="display:none">⏹ Detener transmisión</button>
+  </div>
+
+  <!-- RECEIVER -->
+  <div class="panel" id="panel-r">
+    <div class="section-label">// receptor — tu TV o PC</div>
+
+    <div class="info purple">
+      Ingresa el código de 6 letras que aparece en el celular.<br>
+      Ambos dispositivos deben tener internet (no necesitan misma red WiFi).
+    </div>
+
+    <input class="code-input" id="code-in" maxlength="6" placeholder="· · · · · ·" oninput="fmtCode(this)">
+
+    <div class="status-bar">
+      <div class="dot" id="r-dot"></div>
+      <span id="r-status">Esperando código</span>
+    </div>
+
+    <div class="preview" id="r-preview">
+      <div class="preview-ph" id="r-ph"><div class="ic">📺</div><div>La pantalla del celular aparecerá aquí</div></div>
+      <video id="remote-vid" autoplay playsinline></video>
+      <button class="btn-fs" id="btn-fs" onclick="goFullscreen()">⛶ pantalla completa</button>
+    </div>
+
+    <button class="btn btn-purple" id="btn-conn" onclick="connectReceiver()">🔗 Conectar</button>
+    <button class="btn btn-red" id="btn-disc" onclick="disconnectReceiver()" style="display:none">✖ Desconectar</button>
+  </div>
+
+  <div class="footer">
+    CastFlow · WebRTC P2P via PeerJS · Gratis · Sin servidores propios<br>
+    Compatible: Chrome 72+ · Firefox 66+ · Edge 79+<br>
+    ⚠ La captura de pantalla requiere HTTPS — GitHub Pages lo incluye automáticamente
+  </div>
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────
+const QUALITY = {
+  '720p':  { width:1280,  height:720,  frameRate:30  },
+  '1080p': { width:1920,  height:1080, frameRate:30  },
+  '4k':    { width:3840,  height:2160, frameRate:30  }
+};
+
+let mode = null;
+let quality = QUALITY['1080p'];
+let localStream = null;
+let myPeer = null;          // PeerJS instance (sender)
+let myPeerId = null;
+let activeCalls = [];
+let receiverPeer = null;    // PeerJS instance (receiver)
+let currentCall = null;
+let statsTimer = null;
+
+// ── UI ──────────────────────────────────────────
+function selectMode(m) {
+  mode = m;
+  document.getElementById('card-s').classList.toggle('active', m==='sender');
+  document.getElementById('card-r').classList.toggle('active', m==='receiver');
+  document.getElementById('panel-s').classList.toggle('visible', m==='sender');
+  document.getElementById('panel-r').classList.toggle('visible', m==='receiver');
+}
+
+function setQ(label, el) {
+  document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('on'));
+  el.classList.add('on');
+  quality = QUALITY[label];
+}
+
+function ss(id, txt, type) {
+  document.getElementById(id+'-status').textContent = txt;
+  const d = document.getElementById(id+'-dot');
+  d.className = 'dot' + (type ? ' '+type : '');
+}
+
+function fmtCode(inp) {
+  inp.value = inp.value.replace(/[^A-Za-z0-9]/g,'').toUpperCase().slice(0,6);
+}
+
+function copyCode() {
+  if (myPeerId) {
+    navigator.clipboard.writeText(myPeerId).then(() => {
+      const b = document.querySelector('.btn-copy');
+      b.textContent = '✓ copiado';
+      setTimeout(() => b.textContent = '📋 copiar', 2000);
+    });
+  }
+}
+
+function goFullscreen() {
+  const v = document.getElementById('remote-vid');
+  if (v.requestFullscreen) v.requestFullscreen();
+  else if (v.webkitRequestFullscreen) v.webkitRequestFullscreen();
+}
+
+// ── SENDER ──────────────────────────────────────
+async function startCasting() {
+  ss('s','Solicitando acceso a pantalla...','warn');
+  try {
+    localStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { width:{ideal:quality.width}, height:{ideal:quality.height}, frameRate:{ideal:quality.frameRate}, cursor:'always' },
+      audio: true
+    });
+
+    // Show preview
+    const vid = document.getElementById('local-vid');
+    vid.srcObject = localStream;
+    vid.style.display = 'block';
+    document.getElementById('s-ph').style.display = 'none';
+
+    ss('s','Creando sesión...','warn');
+
+    // Init PeerJS — ID será el código de sesión
+    myPeer = new Peer({ debug: 0 });
+
+    myPeer.on('open', (id) => {
+      myPeerId = id;
+      document.getElementById('my-code').textContent = id;
+      document.getElementById('code-area').style.display = 'block';
+      document.getElementById('s-stats').style.display = 'grid';
+      document.getElementById('st-res').textContent =
+        localStream.getVideoTracks()[0].getSettings().width + '×' +
+        localStream.getVideoTracks()[0].getSettings().height;
+      document.getElementById('st-fps').textContent = quality.frameRate + 'fps';
+      ss('s','Esperando receptor — código: ' + id,'warn');
+    });
+
+    myPeer.on('call', (call) => {
+      // Receptor se conectó — responder con stream
+      call.answer(localStream);
+      activeCalls.push(call);
+      const count = activeCalls.length;
+      document.getElementById('st-peers').textContent = count;
+      ss('s','✓ Transmitiendo a ' + count + ' receptor(es)','on');
+
+      call.on('close', () => {
+        activeCalls = activeCalls.filter(c => c !== call);
+        document.getElementById('st-peers').textContent = activeCalls.length;
+        if (activeCalls.length === 0) ss('s','Receptor desconectado — esperando...','warn');
+      });
+    });
+
+    myPeer.on('error', (e) => {
+      ss('s','Error PeerJS: ' + e.type,'err');
+    });
+
+    localStream.getVideoTracks()[0].onended = () => stopCasting();
+
+    document.getElementById('btn-start').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'flex';
+
+  } catch(e) {
+    const msg = e.name === 'NotAllowedError' ? 'Permiso denegado — acepta la captura de pantalla' : e.message;
+    ss('s','Error: ' + msg,'err');
+  }
+}
+
+function stopCasting() {
+  if (localStream) { localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
+  activeCalls.forEach(c => c.close());
+  activeCalls = [];
+  if (myPeer) { myPeer.destroy(); myPeer=null; myPeerId=null; }
+
+  const vid = document.getElementById('local-vid');
+  vid.srcObject=null; vid.style.display='none';
+  document.getElementById('s-ph').style.display='block';
+  document.getElementById('code-area').style.display='none';
+  document.getElementById('s-stats').style.display='none';
+  document.getElementById('btn-start').style.display='flex';
+  document.getElementById('btn-stop').style.display='none';
+  document.getElementById('my-code').textContent='——————';
+  ss('s','Transmisión finalizada','');
+}
+
+// ── RECEIVER ────────────────────────────────────
+function connectReceiver() {
+  const code = document.getElementById('code-in').value.trim().toUpperCase();
+  if (code.length < 6) { ss('r','Código inválido','err'); return; }
+
+  ss('r','Conectando...','warn');
+
+  if (receiverPeer) { receiverPeer.destroy(); }
+  receiverPeer = new Peer({ debug: 0 });
+
+  receiverPeer.on('open', () => {
+    ss('r','Llamando al emisor...','warn');
+    // Llamar al sender usando el código como peer ID
+    const call = receiverPeer.call(code, new MediaStream()); // stream vacío para iniciar la llamada
+    currentCall = call;
+
+    call.on('stream', (remoteStream) => {
+      const vid = document.getElementById('remote-vid');
+      vid.srcObject = remoteStream;
+      vid.style.display = 'block';
+      document.getElementById('r-ph').style.display = 'none';
+      document.getElementById('btn-fs').style.display = 'block';
+      ss('r','✓ Recibiendo pantalla','on');
+    });
+
+    call.on('close', () => {
+      ss('r','Emisor desconectado','err');
+      resetReceiver();
+    });
+
+    call.on('error', (e) => {
+      ss('r','Error de conexión: ' + e,'err');
+    });
+  });
+
+  receiverPeer.on('error', (e) => {
+    if (e.type === 'peer-unavailable') {
+      ss('r','Código incorrecto o emisor no disponible','err');
+    } else {
+      ss('r','Error: ' + e.type,'err');
+    }
+  });
+
+  document.getElementById('btn-conn').style.display = 'none';
+  document.getElementById('btn-disc').style.display = 'flex';
+}
+
+function resetReceiver() {
+  const vid = document.getElementById('remote-vid');
+  vid.srcObject=null; vid.style.display='none';
+  document.getElementById('r-ph').style.display='block';
+  document.getElementById('btn-fs').style.display='none';
+  document.getElementById('btn-conn').style.display='flex';
+  document.getElementById('btn-disc').style.display='none';
+}
+
+function disconnectReceiver() {
+  if (currentCall) { currentCall.close(); currentCall=null; }
+  if (receiverPeer) { receiverPeer.destroy(); receiverPeer=null; }
+  resetReceiver();
+  document.getElementById('code-in').value='';
+  ss('r','Desconectado','');
+}
+
+// ── COMPAT CHECK ────────────────────────────────
+window.addEventListener('load', () => {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    document.querySelector('.hero p').innerHTML =
+      '⚠ Tu navegador no soporta Screen Capture.<br>Usa Chrome 72+, Edge 79+ o Firefox 66+.';
+  }
+});
+</script>
+</body>
+</html>
